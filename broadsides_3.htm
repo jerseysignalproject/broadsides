@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Broadsides! Unified Hex Command</title>
+    <style>
+        :root {
+            --sea: #2980b9;
+            --island: #27ae60;
+            --gold: #f1c40f;
+            --player: #3498db;
+            --enemy-hidden: #2980b9;
+            /* Hex size synced with engine solution */
+            --ts: 48px; 
+        }
+
+        body {
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            touch-action: manipulation;
+            overflow-x: hidden;
+        }
+
+        #ui-layer {
+            width: 100%;
+            background: #5d4037;
+            padding: 10px;
+            border-bottom: 4px ridge #8d6e63;
+            text-align: center;
+            box-sizing: border-box;
+            z-index: 100;
+            position: sticky;
+            top: 0;
+        }
+
+        .stats { display: flex; justify-content: space-around; font-size: 0.8rem; font-weight: bold; }
+        .captain-notice { color: var(--gold); margin-top: 5px; font-size: 0.9rem; }
+
+        #map-container {
+            padding: 20px;
+            display: inline-block;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        /* Fixed Grid Root from Colony '76 solution */
+        #grid-root {
+            position: relative;
+        }
+
+        .hex {
+            position: absolute; /* Using absolute positioning for perfect interlocking */
+            width: var(--ts);
+            height: var(--ts);
+            background-color: var(--sea);
+            clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: filter 0.2s, transform 0.1s;
+        }
+
+        .hex:hover { filter: brightness(1.3); transform: scale(1.05); z-index: 10; }
+        .hex.player-ship { background-color: #7f8c8d; border: 1px solid #bdc3c7; }
+        .hex.island { background-color: var(--island); cursor: default; }
+        .hex.hit { background-color: #e74c3c !important; color: white; font-weight: bold; }
+        .hex.miss { background-color: #34495e !important; color: #95a5a6; }
+        .hex.treasure { background-color: #8e44ad !important; animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .log {
+            width: 90%;
+            max-width: 600px;
+            height: 100px;
+            background: rgba(0,0,0,0.8);
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 0.8rem;
+            overflow-y: auto;
+            border: 1px solid var(--gold);
+        }
+
+        button {
+            padding: 10px 20px;
+            background: var(--gold);
+            border: none;
+            font-weight: bold;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div class="stats">
+            <div>📍 <span id="loc">Tortuga</span></div>
+            <div>⚔️ Enemy: <span id="sunk">0</span>/17</div>
+            <div>💖 Hull: <span id="hull">17</span>/17</div>
+        </div>
+        <div class="captain-notice" id="captain-wrap">
+            Opponent: <span id="captain-name">Blackbeard</span>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div id="grid-root"></div>
+    </div>
+
+    <div class="log" id="ship-log">> Welcome to the high seas, Captain.</div>
+    <button onclick="resetGame()">Abandon Voyage</button>
+
+    <script>
+        const LOCATIONS = ["Tortuga", "Port Royal", "Shipwreck Cove", "Ocracoke Inlet", "The Devil's Throat"];
+        const CAPTAINS = ["Blackbeard", "Anne Bonny", "Calico Jack", "Sir Francis Drake", "L'Olonnais"];
+        const SHIP_SIZES = [5, 4, 3, 3, 2];
+        
+        let level = 1;
+        let gridSize = 10;
+        let mapData = []; 
+        let playerHull = 17;
+        let enemyHull = 17;
+        let bonusTurn = false;
+        let gameOver = false;
+        const tileSize = 48; 
+
+        function initLevel() {
+            gridSize = 8 + level; 
+            playerHull = 17;
+            enemyHull = 17;
+            gameOver = false;
+            
+            document.getElementById('loc').innerText = LOCATIONS[(level-1) % LOCATIONS.length];
+            document.getElementById('captain-name').innerText = CAPTAINS[(level-1) % CAPTAINS.length];
+            document.getElementById('hull').innerText = playerHull;
+            document.getElementById('sunk').innerText = "0";
+
+            generateMap();
+            renderMap();
+            log(`Level ${level}: The map expands to ${gridSize}x${gridSize}.`);
+        }
+
+        function generateMap() {
+            mapData = Array.from({ length: gridSize }, () => Array(gridSize).fill(0));
+            
+            let islands = Math.floor(gridSize * 1.5);
+            while(islands > 0) {
+                let r = Math.floor(Math.random() * gridSize);
+                let c = Math.floor(Math.random() * gridSize);
+                if(mapData[r][c] === 0) {
+                    mapData[r][c] = Math.random() < 0.2 ? 4 : 3;
+                    islands--;
+                }
+            }
+
+            placeFleet(1); 
+            placeFleet(2); 
+        }
+
+        function placeFleet(type) {
+            SHIP_SIZES.forEach(size => {
+                let placed = false;
+                while(!placed) {
+                    let r = Math.floor(Math.random() * gridSize);
+                    let c = Math.floor(Math.random() * gridSize);
+                    let dir = Math.floor(Math.random() * 2); 
+                    
+                    if(canFit(r, c, size, dir)) {
+                        for(let i=0; i<size; i++) {
+                            let nr = dir === 1 ? r + i : r;
+                            let nc = dir === 0 ? c + i : c;
+                            mapData[nr][nc] = type;
+                        }
+                        placed = true;
+                    }
+                }
+            });
+        }
+
+        function canFit(r, c, size, dir) {
+            for(let i=0; i<size; i++) {
+                let nr = dir === 1 ? r + i : r;
+                let nc = dir === 0 ? c + i : c;
+                if(nr >= gridSize || nc >= gridSize || mapData[nr][nc] !== 0) return false;
+            }
+            return true;
+        }
+
+        function renderMap() {
+            const root = document.getElementById('grid-root');
+            root.innerHTML = '';
+            
+            // Set explicit dimensions for the relative container
+            root.style.width = (gridSize * tileSize + (tileSize/2)) + "px";
+            root.style.height = (gridSize * tileSize * 0.75 + (tileSize/4)) + "px";
+
+            for(let r=0; r<gridSize; r++) {
+                for(let c=0; c<gridSize; c++) {
+                    const hex = document.createElement('div');
+                    hex.className = 'hex';
+                    const val = mapData[r][c];
+
+                    // Fixed Coordinate Math from engine solution
+                    const px = c * tileSize + (r % 2 ? tileSize / 2 : 0);
+                    const py = r * (tileSize * 0.75);
+
+                    hex.style.left = px + 'px';
+                    hex.style.top = py + 'px';
+                    hex.id = `t-${r}-${c}`;
+
+                    if(val === 3 || val === 4) { hex.classList.add('island'); hex.innerText = '🏝️'; }
+                    if(val === 1) { hex.classList.add('player-ship'); hex.innerText = '⛵'; }
+                    
+                    hex.onclick = () => handleMove(r, c, hex);
+                    root.appendChild(hex);
+                }
+            }
+        }
+
+        function handleMove(r, c, el) {
+            if(gameOver || mapData[r][c] === 1 || el.classList.contains('hit') || el.classList.contains('miss')) return;
+
+            const val = mapData[r][c];
+            if(val === 2) {
+                mapData[r][c] = -1;
+                el.classList.add('hit');
+                el.innerText = '💥';
+                enemyHull--;
+                document.getElementById('sunk').innerText = 17 - enemyHull;
+                log("Direct hit! The enemy hull splinters.");
+            } else if(val === 4) {
+                el.classList.add('treasure');
+                el.innerText = '💰';
+                bonusTurn = true;
+                log("TREASURE! Your crew is inspired to fire again!");
+            } else if(val === 3) {
+                el.innerText = '⛰️';
+                log("Cannonball shattered against the cliffs.");
+            } else {
+                el.classList.add('miss');
+                el.innerText = '🌊';
+                log("Splash! Nothing but salt water.");
+            }
+
+            checkGameEnd();
+            
+            if(!gameOver) {
+                if(bonusTurn) {
+                    bonusTurn = false;
+                } else {
+                    setTimeout(enemyTurn, 600);
+                }
+            }
+        }
+
+        function enemyTurn() {
+            let r, c;
+            do {
+                r = Math.floor(Math.random() * gridSize);
+                c = Math.floor(Math.random() * gridSize);
+            } while(mapData[r][c] < 0 || mapData[r][c] === 3 || mapData[r][c] === 4 || mapData[r][c] === 2);
+
+            const hex = document.getElementById(`t-${r}-${c}`);
+
+            if(mapData[r][c] === 1) {
+                mapData[r][c] = -1;
+                hex.classList.add('hit');
+                hex.innerText = '🔥';
+                playerHull--;
+                document.getElementById('hull').innerText = playerHull;
+                log("We've been hit! Patch the leaks!");
+            } else {
+                hex.classList.add('miss');
+                hex.innerText = '🌊';
+                log("The enemy's shot fell short.");
+            }
+            checkGameEnd();
+        }
+
+        function checkGameEnd() {
+            if(enemyHull <= 0) {
+                gameOver = true;
+                level++;
+                setTimeout(() => {
+                    alert(`VICTORY! ${CAPTAINS[(level-2)%CAPTAINS.length]} surrenders!`);
+                    initLevel();
+                }, 100);
+            } else if(playerHull <= 0) {
+                gameOver = true;
+                setTimeout(() => {
+                    alert("Your fleet is lost. Deep-sea burial awaits.");
+                    resetGame();
+                }, 100);
+            }
+        }
+
+        function log(msg) {
+            const l = document.getElementById('ship-log');
+            l.innerHTML = `> ${msg}<br>${l.innerHTML}`;
+        }
+
+        function resetGame() {
+            level = 1;
+            initLevel();
+        }
+
+        initLevel();
+    </script>
+</body>
+</html>
