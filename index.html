@@ -53,6 +53,39 @@
         .stats { display: flex; justify-content: space-around; font-size: 0.8rem; font-weight: bold; }
         .captain-notice { color: var(--gold); margin-top: 5px; font-size: 0.9rem; }
 
+        /* Selection Screen */
+        #selection-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .pirate-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .pirate-card {
+            background: #3e2723;
+            border: 3px ridge var(--gold);
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .pirate-card:hover { transform: scale(1.05); background: #5d4037; }
+        .pirate-card h3 { margin: 5px 0; font-size: 1rem; color: var(--gold); }
+        .pirate-card p { font-size: 0.7rem; margin: 0; color: #ccc; }
+
         #map-container {
             padding: 20px;
             margin: 0 auto;
@@ -119,10 +152,41 @@
             margin-bottom: 20px;
             cursor: pointer;
         }
+
+        #music-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px;
+            font-size: 0.7rem;
+        }
     </style>
 </head>
 <body>
+    <div id="selection-overlay">
+        <h1>SELECT YOUR CAPTAIN</h1>
+        <div class="pirate-grid">
+            <div class="pirate-card" onclick="selectPirate(0)">
+                <h3>🛡️ Iron-Side Ivan</h3>
+                <p>+5 Hull Integrity<br>Con: Heavy ship moves slow</p>
+            </div>
+            <div class="pirate-card" onclick="selectPirate(1)">
+                <h3>⚡ Swift Sally</h3>
+                <p>Double Bonus Turns<br>Con: Fragile Hull (-3)</p>
+            </div>
+            <div class="pirate-card" onclick="selectPirate(2)">
+                <h3>🍀 Lucky Larry</h3>
+                <p>More Treasure Spawns<br>Con: Enemy AI is Smarter</p>
+            </div>
+            <div class="pirate-card" onclick="selectPirate(3)">
+                <h3>🎯 Deadeye Dick</h3>
+                <p>Hits do 2x Damage<br>Con: Fewer Islands/Cover</p>
+            </div>
+        </div>
+    </div>
+
     <div id="ui-layer">
+        <button id="music-toggle" onclick="toggleMusic()">🎵 Music: OFF</button>
         <div class="stats">
             <div>📍 <span id="loc">Tortuga</span></div>
             <div>⚔️ Enemy: <span id="sunk">0</span>/17</div>
@@ -141,52 +205,163 @@
     <button onclick="resetGame()">Abandon Voyage</button>
 
     <script>
-        // --- Audio Logic (ZzFX Micro) ---
+        // --- Music/Audio Logic ---
+        let audioCtx = null;
+        let isMusicOn = false;
+        let musicTimer = null;
+
+        function toggleMusic() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            isMusicOn = !isMusicOn;
+            document.getElementById('music-toggle').innerText = isMusicOn ? "🎵 Music: ON" : "🎵 Music: OFF";
+            if (isMusicOn) playTune(); else clearTimeout(musicTimer);
+        }
+
+function playTune() {
+    if (!isMusicOn) return;
+    const now = audioCtx.currentTime;
+    const tempo = 0.20; // Slightly slower for a "lazier" sea feel
+    
+    // "Drunken Sailor" melody
+    const melody = [
+        293, 293, 293, 293, 293, 349, 440, 293, 
+        392, 392, 392, 392, 392, 349, 261, 392,
+        293, 293, 293, 293, 293, 349, 440, 523,
+        440, 392, 349, 261, 293, 293, 293, 0
+    ];
+
+    // Master Filter to remove the "stinging" high frequencies
+    const masterFilter = audioCtx.createBiquadFilter();
+    masterFilter.type = 'lowpass';
+    masterFilter.frequency.value = 1200; // Muffles the harshness
+    masterFilter.connect(audioCtx.destination);
+
+    // Simple Delay (Echo) for atmosphere
+    const delay = audioCtx.createDelay();
+    delay.delayTime.value = tempo * 0.75;
+    const delayFeedback = audioCtx.createGain();
+    delayFeedback.gain.value = 0.2;
+    
+    delay.connect(delayFeedback);
+    delayFeedback.connect(delay);
+    delay.connect(masterFilter);
+
+    melody.forEach((f, i) => {
+        if (f > 0) {
+            // Humanize: tiny random offset in timing and volume
+            const timing = now + (i * tempo) + (Math.random() * 0.01);
+            const velocity = 0.04 + (Math.random() * 0.02);
+
+            // VOICE: The "Concertina" (Two detuned oscillators)
+            [f, f + 2].forEach((freq, v) => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                // Triangle is soft, but we'll mix in a tiny bit of Sawtooth for character
+                osc.type = v === 0 ? 'triangle' : 'sawtooth';
+                osc.frequency.setValueAtTime(freq, timing);
+                
+                // Soft Envelope (Slightly longer attack/release)
+                gain.gain.setValueAtTime(0, timing);
+                gain.gain.linearRampToValueAtTime(v === 0 ? velocity : velocity * 0.3, timing + 0.04);
+                gain.gain.exponentialRampToValueAtTime(0.0001, timing + tempo * 1.2);
+                
+                osc.connect(gain);
+                gain.connect(masterFilter);
+                if (v === 0) gain.connect(delay); // Only send primary voice to echo
+                
+                osc.start(timing);
+                osc.stop(timing + tempo * 1.5);
+            });
+        }
+
+        // BASS: A soft "Thrum" instead of a harsh square
+        if (i % 4 === 0) {
+            const bFreq = i % 8 === 0 ? 146 : 130; // D2 to C2
+            const bOsc = audioCtx.createOscillator();
+            const bGain = audioCtx.createGain();
+            
+            bOsc.type = 'triangle'; // Triangle bass is much warmer
+            bOsc.frequency.setValueAtTime(bFreq, now + i * tempo);
+            
+            bGain.gain.setValueAtTime(0, now + i * tempo);
+            bGain.gain.linearRampToValueAtTime(0.06, now + i * tempo + 0.05);
+            bGain.gain.exponentialRampToValueAtTime(0.0001, now + i * tempo + tempo * 3);
+            
+            bOsc.connect(bGain);
+            bGain.connect(masterFilter);
+            bOsc.start(now + i * tempo);
+            bOsc.stop(now + i * tempo + tempo * 3);
+        }
+    });
+
+    musicTimer = setTimeout(playTune, melody.length * tempo * 1000);
+}
+
         const playSfx = (type) => {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain); gain.connect(ctx.destination);
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
             
             if(type === 'hit') {
                 osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(150, ctx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(10, ctx.currentTime + 0.2);
-                gain.gain.setValueAtTime(0.2, ctx.currentTime);
-                gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.2);
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.2);
             } else if(type === 'miss') {
                 osc.type = 'sine';
-                osc.frequency.setValueAtTime(200, ctx.currentTime);
-                osc.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.1);
-                gain.gain.setValueAtTime(0.1, ctx.currentTime);
-                gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
+                osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+                osc.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.1);
             }
-            osc.start(); osc.stop(ctx.currentTime + 0.2);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.2);
         };
+
+        // --- Game Logic ---
+        const PIRATE_STATS = [
+            { name: "Iron-Side Ivan", hull: 22, perk: "tank", con: "none" },
+            { name: "Swift Sally", hull: 14, perk: "speed", con: "none" },
+            { name: "Lucky Larry", hull: 17, perk: "loot", con: "smart_ai" },
+            { name: "Deadeye Dick", hull: 17, perk: "power", con: "open_sea" }
+        ];
 
         const LOCATIONS = ["Tortuga", "Port Royal", "Shipwreck Cove", "Ocracoke Inlet", "Devil's Throat"];
         const CAPTAINS = ["Blackbeard", "Anne Bonny", "Calico Jack", "Sir Francis Drake", "L'Olonnais"];
         const SHIP_SIZES = [5, 4, 3, 3, 2];
         
+        let selectedPirate = null;
         let level = 1;
         let gridSize = 10;
         let mapData = []; 
         let playerHull = 17;
         let enemyHull = 17;
-        let bonusTurn = false;
+        let bonusTurnsLeft = 0;
         let gameOver = false;
         const tileSize = 48; 
-
-        // AI Memory for Search & Destroy
         let aiTargetStack = [];
 
+        function selectPirate(index) {
+            selectedPirate = PIRATE_STATS[index];
+            document.getElementById('selection-overlay').style.display = 'none';
+            initLevel();
+        }
+
         function initLevel() {
+            if(!selectedPirate) return;
             gridSize = 8 + level; 
-            playerHull = 17;
+            playerHull = selectedPirate.hull;
             enemyHull = 17;
             gameOver = false;
             aiTargetStack = [];
             
+            // Lucky Larry starts with a disadvantage: AI target stack pre-filled with random guesses
+            if(selectedPirate.con === "smart_ai") {
+                for(let i=0; i<3; i++) aiTargetStack.push({r: Math.floor(Math.random()*gridSize), c: Math.floor(Math.random()*gridSize)});
+            }
+
             document.getElementById('loc').innerText = LOCATIONS[(level-1) % LOCATIONS.length];
             document.getElementById('captain-name').innerText = CAPTAINS[(level-1) % CAPTAINS.length];
             document.getElementById('hull').innerText = playerHull;
@@ -194,23 +369,28 @@
 
             generateMap();
             renderMap();
-            log(`Level ${level}: Sea charts expanded to ${gridSize}x${gridSize}.`);
+            log(`${selectedPirate.name} arrives at ${LOCATIONS[(level-1)%LOCATIONS.length]}!`);
         }
 
         function generateMap() {
             mapData = Array.from({ length: gridSize }, () => Array(gridSize).fill(0));
             
-            let islands = Math.floor(gridSize * 1.5);
+            // Deadeye Dick has fewer islands for cover
+            let islandChance = selectedPirate.con === "open_sea" ? 0.7 : 1.5;
+            let islands = Math.floor(gridSize * islandChance);
+            
             while(islands > 0) {
                 let r = Math.floor(Math.random() * gridSize);
                 let c = Math.floor(Math.random() * gridSize);
                 if(mapData[r][c] === 0) {
-                    mapData[r][c] = Math.random() < 0.2 ? 4 : 3;
+                    // Lucky Larry finds more treasure islands (type 4)
+                    let lootChance = selectedPirate.perk === "loot" ? 0.4 : 0.2;
+                    mapData[r][c] = Math.random() < lootChance ? 4 : 3;
                     islands--;
                 }
             }
-            placeFleet(1); // Player
-            placeFleet(2); // Enemy
+            placeFleet(1); 
+            placeFleet(2); 
         }
 
         function placeFleet(type) {
@@ -244,8 +424,6 @@
         function renderMap() {
             const root = document.getElementById('grid-root');
             root.innerHTML = '';
-            
-            // Container math to prevent clipping
             root.style.width = (gridSize * tileSize + (tileSize/2)) + "px";
             root.style.height = (gridSize * tileSize * 0.75 + (tileSize/4)) + "px";
 
@@ -254,17 +432,13 @@
                     const hex = document.createElement('div');
                     hex.className = 'hex';
                     const val = mapData[r][c];
-
                     const px = c * tileSize + (r % 2 ? tileSize / 2 : 0);
                     const py = r * (tileSize * 0.75);
-
                     hex.style.left = px + 'px';
                     hex.style.top = py + 'px';
                     hex.id = `t-${r}-${c}`;
-
                     if(val === 3 || val === 4) { hex.classList.add('island'); hex.innerText = '🏝️'; }
                     if(val === 1) { hex.classList.add('player-ship'); hex.innerText = '⛵'; }
-                    
                     hex.onclick = () => handleMove(r, c, hex);
                     root.appendChild(hex);
                 }
@@ -279,30 +453,33 @@
                 mapData[r][c] = -1;
                 el.classList.add('hit');
                 el.innerText = '💥';
-                enemyHull--;
+                // Deadeye Dick does 2 damage per hit
+                let damage = selectedPirate.perk === "power" ? 2 : 1;
+                enemyHull -= damage;
                 playSfx('hit');
-                document.getElementById('sunk').innerText = 17 - enemyHull;
-                log("Direct hit! Splinters fly everywhere.");
+                document.getElementById('sunk').innerText = Math.max(0, 17 - enemyHull);
+                log(`${selectedPirate.name} scores a massive hit!`);
             } else if(val === 4) {
                 el.classList.add('treasure');
                 el.innerText = '💰';
-                bonusTurn = true;
-                log("Treasure chest found! The crew reloads instantly!");
+                // Swift Sally gets 2 bonus turns
+                bonusTurnsLeft = selectedPirate.perk === "speed" ? 2 : 1;
+                log("Treasure! The crew is working double time!");
             } else if(val === 3) {
                 el.innerText = '⛰️';
-                log("Your shot ricocheted off the rocks.");
+                log("Shot bounced off the cliffs.");
             } else {
                 el.classList.add('miss');
                 el.innerText = '🌊';
                 playSfx('miss');
-                log("Splash! Saltwater in the eyes.");
+                log("Missed! The waves swallow the iron.");
             }
 
             checkGameEnd();
             
             if(!gameOver) {
-                if(bonusTurn) {
-                    bonusTurn = false;
+                if(bonusTurnsLeft > 0) {
+                    bonusTurnsLeft--;
                 } else {
                     setTimeout(enemyTurn, 600);
                 }
@@ -312,11 +489,9 @@
         function enemyTurn() {
             let r, c;
             if (aiTargetStack.length > 0) {
-                // Search nearby previous hit
                 let target = aiTargetStack.pop();
                 r = target.r; c = target.c;
             } else {
-                // Hunt mode
                 do {
                     r = Math.floor(Math.random() * gridSize);
                     c = Math.floor(Math.random() * gridSize);
@@ -324,7 +499,7 @@
             }
 
             const hex = document.getElementById(`t-${r}-${c}`);
-            if(!hex) return enemyTurn(); // Fallback for invalid AI picks
+            if(!hex) return enemyTurn();
 
             if(mapData[r][c] === 1) {
                 mapData[r][c] = -1;
@@ -335,7 +510,6 @@
                 document.getElementById('map-container').classList.add('shake');
                 setTimeout(() => document.getElementById('map-container').classList.remove('shake'), 200);
                 
-                // Add neighbors to stack for next turn
                 [[r-1,c],[r+1,c],[r,c-1],[r,c+1]].forEach(([nr, nc]) => {
                     if(nr>=0 && nr<gridSize && nc>=0 && nc<gridSize && mapData[nr][nc] >= 0 && mapData[nr][nc] !== 2) {
                         aiTargetStack.push({r: nr, c: nc});
@@ -343,12 +517,12 @@
                 });
 
                 document.getElementById('hull').innerText = playerHull;
-                log("Hull breach! We're taking on water!");
+                log("We've been hit! Patch the hull!");
             } else {
                 hex.classList.add('miss');
                 hex.innerText = '🌊';
                 playSfx('miss');
-                log("The enemy captain miscalculated the wind.");
+                log("The enemy missed. Luck is with us.");
             }
             checkGameEnd();
         }
@@ -358,13 +532,13 @@
                 gameOver = true;
                 level++;
                 setTimeout(() => {
-                    alert(`VICTORY! ${CAPTAINS[(level-2)%CAPTAINS.length]} has struck their colors!`);
+                    alert(`VICTORY! ${CAPTAINS[(level-2)%CAPTAINS.length]} surrenders!`);
                     initLevel();
                 }, 100);
             } else if(playerHull <= 0) {
                 gameOver = true;
                 setTimeout(() => {
-                    alert("Your ship has found the locker. Game Over.");
+                    alert("Your voyage ends here. The sea claims another.");
                     resetGame();
                 }, 100);
             }
@@ -377,10 +551,9 @@
 
         function resetGame() {
             level = 1;
-            initLevel();
+            selectedPirate = null;
+            document.getElementById('selection-overlay').style.display = 'flex';
         }
-
-        initLevel();
     </script>
 </body>
 </html>
